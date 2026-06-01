@@ -11,14 +11,10 @@ def calculate_sha256(file_path):
                 sha256_hash.update(chunk)
         return sha256_hash.hexdigest()
     except (OSError, PermissionError):
-        # Skip broken symlinks or unreadable files
         return None
 
 def build_reference_map(source_dir):
-    """
-    Scans the main reference directory and maps files by (filename, size).
-    This acts as a fast lookup filter before we do heavy hash checks.
-    """
+    """Scans the main reference directory and maps files by (filename, size)."""
     ref_map = {}
     print(f"[*] Scanning reference directory: {source_dir}")
     
@@ -35,19 +31,22 @@ def build_reference_map(source_dir):
             except (OSError, PermissionError):
                 continue
                 
-    print(f"[+] Mapping complete. Found {len(ref_map)} unique (name+size) groups.\n")
+    print(f"[+] Mapping complete. Found {len(ref_map)} unique groups.\n")
     return ref_map
 
-def isolate_duplicates(target_dir, ref_map, safe_zone_dir):
+def process_and_sort_gallery(target_dir, ref_map, duplicates_dir, uniques_dir):
     """
-    Compares target directory against the reference map.
-    Verifies matches using SHA-256 and safely moves duplicates to a staging area.
+    Scans the target directory. 
+    Moves actual duplicates to 'duplicates_dir' and completely unique files to 'uniques_dir'.
     """
-    print(f"[*] Analyzing target directory for duplicates: {target_dir}")
-    match_count = 0
+    print(f"[*] Processing and sorting target directory: {target_dir}")
+    dup_count = 0
+    unique_count = 0
     
-    if not os.path.exists(safe_zone_dir):
-        os.makedirs(safe_zone_dir)
+    # Ensure both output folders exist
+    for folder in [duplicates_dir, uniques_dir]:
+        if not os.path.exists(folder):
+            os.makedirs(folder)
 
     for root, _, files in os.walk(target_dir):
         for file in files:
@@ -56,41 +55,51 @@ def isolate_duplicates(target_dir, ref_map, safe_zone_dir):
                 file_size = os.path.getsize(full_path)
                 key = (file, file_size)
                 
-                # Fast track: check if filename and size match anything in the source
+                is_duplicate = False
+                
+                # 1. Step: Check if filename and size match any reference
                 if key in ref_map:
                     target_hash = calculate_sha256(full_path)
-                    if not target_hash:
-                        continue
-                        
-                    is_duplicate = False
-                    # Deep validation: compare actual hashes
-                    for candidate_path in ref_map[key]:
-                        source_hash = calculate_sha256(candidate_path)
-                        if target_hash == source_hash:
-                            is_duplicate = True
-                            break
-                    
-                    if is_duplicate:
-                        match_count += 1
-                        # Rename slightly to avoid filename collisions in the staging folder
-                        staged_filename = f"dup_{match_count}_{file}"
-                        destination_path = os.path.join(safe_zone_dir, staged_filename)
-                        
-                        shutil.move(full_path, destination_path)
-                        print(f"[MATCH #{match_count}] Isolated: {file}")
+                    if target_hash:
+                        # 2. Step: Deep verification using SHA-256
+                        for candidate_path in ref_map[key]:
+                            source_hash = calculate_sha256(candidate_path)
+                            if target_hash == source_hash:
+                                is_duplicate = True
+                                break
+                
+                # Route the file based on verification
+                if is_duplicate:
+                    dup_count += 1
+                    dest_name = f"dup_{dup_count}_{file}"
+                    dest_path = os.path.join(duplicates_dir, dest_name)
+                    shutil.move(full_path, dest_path)
+                    print(f"[DUPLICATE #{dup_count}] Isolated: {file}")
+                else:
+                    # File is completely unique! Move it to the unique staging area
+                    unique_count += 1
+                    dest_name = f"unique_{unique_count}_{file}"
+                    dest_path = os.path.join(uniques_dir, dest_name)
+                    shutil.move(full_path, dest_path)
+                    print(f"[UNIQUE #{unique_count}] Extracted: {file}")
                         
             except (OSError, PermissionError):
                 continue
                 
     print("\n" + "="*50)
-    print(f"[+] Process finished. {match_count} duplicates moved to: {safe_zone_dir}")
+    print(f"[+] Pipeline finished tracking.")
+    print(f"-> Total Duplicates isolated: {dup_count} (Saved to {duplicates_dir})")
+    print(f"-> Total Unique files extracted: {unique_count} (Saved to {uniques_dir})")
 
 if __name__ == '__main__':
-    # Define your local paths here
+    # Define your paths
     SOURCE_DIR = r"C:\Path\To\Main_Gallery"
     TARGET_DIR = r"C:\Path\To\Suspected_Duplicates"
-    STAGING_DIR = r"C:\Path\To\Desktop\Isolated_Duplicates"
+    
+    # Output destinations
+    DUPLICATES_STAGING = r"C:\Path\To\Desktop\Isolated_Duplicates"
+    UNIQUES_STAGING = r"C:\Path\To\Desktop\New_Unique_Photos"
 
-    # Run the pipeline
+    # Start the clean-up engine
     reference_data = build_reference_map(SOURCE_DIR)
-    isolate_duplicates(TARGET_DIR, reference_data, STAGING_DIR)
+    process_and_sort_gallery(TARGET_DIR, reference_data, DUPLICATES_STAGING, UNIQUES_STAGING)
