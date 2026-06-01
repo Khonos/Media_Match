@@ -13,6 +13,23 @@ def calculate_sha256(file_path):
     except (OSError, PermissionError):
         return None
 
+def get_safe_path(target_folder, original_filename):
+    """
+    Ensures that moving a file won't overwrite an existing file.
+    If 'IMG_1234.jpg' exists, it returns 'IMG_1234 (1).jpg' without touching the root name.
+    """
+    base_name, extension = os.path.splitext(original_filename)
+    counter = 1
+    new_path = os.path.join(target_folder, original_filename)
+    
+    # If file already exists in the destination, append (1), (2), etc.
+    while os.path.exists(new_path):
+        new_filename = f"{base_name} ({counter}){extension}"
+        new_path = os.path.join(target_folder, new_filename)
+        counter += 1
+        
+    return new_path
+
 def build_reference_map(source_dir):
     """Scans the main reference directory and maps files by (filename, size)."""
     ref_map = {}
@@ -38,12 +55,12 @@ def process_and_sort_gallery(target_dir, ref_map, duplicates_dir, uniques_dir):
     """
     Scans the target directory. 
     Moves actual duplicates to 'duplicates_dir' and completely unique files to 'uniques_dir'.
+    Preserves original filenames unless a naming collision occurs.
     """
     print(f"[*] Processing and sorting target directory: {target_dir}")
     dup_count = 0
     unique_count = 0
     
-    # Ensure both output folders exist
     for folder in [duplicates_dir, uniques_dir]:
         if not os.path.exists(folder):
             os.makedirs(folder)
@@ -57,31 +74,30 @@ def process_and_sort_gallery(target_dir, ref_map, duplicates_dir, uniques_dir):
                 
                 is_duplicate = False
                 
-                # 1. Step: Check if filename and size match any reference
+                # Step 1: Pre-filter check
                 if key in ref_map:
                     target_hash = calculate_sha256(full_path)
                     if target_hash:
-                        # 2. Step: Deep verification using SHA-256
+                        # Step 2: SHA-256 verification
                         for candidate_path in ref_map[key]:
                             source_hash = calculate_sha256(candidate_path)
                             if target_hash == source_hash:
                                 is_duplicate = True
                                 break
                 
-                # Route the file based on verification
+                # Step 3: Route files with safe naming check
                 if is_duplicate:
                     dup_count += 1
-                    dest_name = f"dup_{dup_count}_{file}"
-                    dest_path = os.path.join(duplicates_dir, dest_name)
-                    shutil.move(full_path, dest_path)
-                    print(f"[DUPLICATE #{dup_count}] Isolated: {file}")
+                    # Finds a safe path like C:\...\Desktop\Duplicates\IMG_1234.jpg
+                    destination_path = get_safe_path(duplicates_dir, file)
+                    shutil.move(full_path, destination_path)
+                    print(f"[DUPLICATE #{dup_count}] Isolated: {os.path.basename(destination_path)}")
                 else:
-                    # File is completely unique! Move it to the unique staging area
                     unique_count += 1
-                    dest_name = f"unique_{unique_count}_{file}"
-                    dest_path = os.path.join(uniques_dir, dest_name)
-                    shutil.move(full_path, dest_path)
-                    print(f"[UNIQUE #{unique_count}] Extracted: {file}")
+                    # Finds a safe path like C:\...\Desktop\Uniques\IMG_1234.jpg
+                    destination_path = get_safe_path(uniques_dir, file)
+                    shutil.move(full_path, destination_path)
+                    print(f"[UNIQUE #{unique_count}] Extracted: {os.path.basename(destination_path)}")
                         
             except (OSError, PermissionError):
                 continue
@@ -92,14 +108,11 @@ def process_and_sort_gallery(target_dir, ref_map, duplicates_dir, uniques_dir):
     print(f"-> Total Unique files extracted: {unique_count} (Saved to {uniques_dir})")
 
 if __name__ == '__main__':
-    # Define your paths
     SOURCE_DIR = r"C:\Path\To\Main_Gallery"
     TARGET_DIR = r"C:\Path\To\Suspected_Duplicates"
     
-    # Output destinations
     DUPLICATES_STAGING = r"C:\Path\To\Desktop\Isolated_Duplicates"
     UNIQUES_STAGING = r"C:\Path\To\Desktop\New_Unique_Photos"
 
-    # Start the clean-up engine
     reference_data = build_reference_map(SOURCE_DIR)
     process_and_sort_gallery(TARGET_DIR, reference_data, DUPLICATES_STAGING, UNIQUES_STAGING)
